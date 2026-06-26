@@ -119,7 +119,25 @@ They default to `F:\WAD_env\ParentImages\` (falls back to a path next to the
 scripts if `F:\` doesn't exist). Base images need 15–20 GB+ each — confirm
 the target drive has the space.
 
-### Option A — From scratch
+### Option A — Download from OneDrive (easiest)
+
+If you already have sysprepped VHDXs stored on your personal OneDrive:
+
+1. Launch the wizard: `.\Start-LabDeployWizard.ps1`
+2. In the *Host & security* section, click **From OneDrive...** next to the
+   *Server 2022 image* field.
+3. Paste your OneDrive sharing link (the URL from "Copy link" in OneDrive)
+   and click **Download**. The transfer runs via BITS — progress is visible
+   in the console behind the form. For a 15–20 GB image expect 10–20 minutes
+   depending on your connection.
+4. Repeat for the *Windows 11 image* field.
+5. Click **Deploy** — the wizard auto-protects the downloaded files and
+   proceeds normally.
+
+> The download saves to whatever path is shown in the image textbox. Change
+> that path before clicking "From OneDrive..." if you want the file elsewhere.
+
+### Option B — From scratch
 
 1. Get Windows Server 2022 and Windows 11 ISOs (evaluation or licensed).
    Eval images expire around 180 days — confirm your activation path.
@@ -129,7 +147,7 @@ the target drive has the space.
    ```
 3. Place the resulting flat VHDX at the matching `*-Base.vhdx` path.
 
-### Option B — From an existing sysprepped template
+### Option C — From an existing sysprepped template
 
 **Flat `.vhdx` (no checkpoint):** launch the wizard and browse to the file
 directly in the *Server 2022 image* or *Windows 11 image* fields. No copy,
@@ -182,8 +200,9 @@ ever modified.
 ```
 
 Covers everything: VM counts, hostnames, IPs, adapter, storage, template
-files, password. Browse directly to your `.vhdx` templates — no copy or
-rename required. Runs `Deploy.ps1` directly when you click Deploy.
+files, password. For each template you can either **Browse** to a local
+`.vhdx` file or click **From OneDrive...** to paste a sharing link and
+download it in-place. Runs `Deploy.ps1` directly when you click Deploy.
 
 ### CLI (scripting / headless)
 
@@ -235,7 +254,8 @@ that's the nesting overhead, not a code bug.
 
 ```powershell
 Invoke-Pester -Path .\Tests\VmDefinitions.Tests.ps1, .\Tests\ParentImage.Tests.ps1, `
-    .\Tests\Unattend.Tests.ps1, .\Tests\DiskBudget.Tests.ps1, .\Tests\Logging.Tests.ps1
+    .\Tests\Unattend.Tests.ps1, .\Tests\DiskBudget.Tests.ps1, .\Tests\Logging.Tests.ps1, `
+    .\Tests\OneDriveDownload.Tests.ps1
 ```
 
 **E2E tests** (builds and tears down real VMs — run only on the actual Hyper-V host,
@@ -255,11 +275,12 @@ cycles with no manual intervention, as one automated test run.
 ```
 WAD_env/
 ├── Lib/
-│   ├── VmDefinitions.psm1    # topology + network config + pre-flight IP check
-│   ├── ParentImage.psm1      # parent VHDX read-only protection
-│   ├── Unattend.psm1         # per-VM unattend.xml generation + offline injection
-│   ├── DiskBudget.psm1       # disk-space pre-flight + size reporting
-│   └── Logging.psm1          # timestamped run logging
+│   ├── VmDefinitions.psm1      # topology + network config + pre-flight IP check
+│   ├── ParentImage.psm1        # parent VHDX read-only protection
+│   ├── Unattend.psm1           # per-VM unattend.xml generation + offline injection
+│   ├── OneDriveDownload.psm1   # OneDrive sharing-link → BITS download
+│   ├── DiskBudget.psm1         # disk-space pre-flight + size reporting
+│   └── Logging.psm1            # timestamped run logging
 ├── Deploy.ps1                 # builds the lab
 ├── Reset.ps1                  # restores to 00-baseline or tears down
 ├── Start-LabDeployWizard.ps1  # GUI front-end (optional)
