@@ -48,6 +48,7 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 
 Import-Module (Join-Path $PSScriptRoot 'Lib\VmDefinitions.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Lib\ParentImage.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Lib\OneDriveDownload.psm1') -Force
 
 function New-VmPreviewRows {
     param($DomainACount, $DomainBCount, $ClientCount, $BaseIP, $Prefix, $Gateway, $Dns, $NameOverridesTable, $IPOverridesTable = @{})
@@ -177,12 +178,14 @@ $btnVmRoot = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [Sys
 $defaultParentRoot = if (Test-Path -LiteralPath 'F:\') { 'F:\WAD_env\ParentImages' } else { Join-Path $PSScriptRoot 'ParentImages' }
 
 $lblServer2022 = [System.Windows.Forms.Label]@{ Text = 'Server 2022 image (.vhdx):'; Location = [System.Drawing.Point]::new(10, 108); AutoSize = $true }
-$txtServer2022 = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 105); Width = 380; Text = (Join-Path $defaultParentRoot 'Server2022-Base.vhdx') }
-$btnServer2022 = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(570, 104); Width = 90 }
+$txtServer2022 = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 105); Width = 265; Text = (Join-Path $defaultParentRoot 'Server2022-Base.vhdx') }
+$btnServer2022 = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(455, 104); Width = 80 }
+$btnServer2022Od = [System.Windows.Forms.Button]@{ Text = 'From OneDrive...'; Location = [System.Drawing.Point]::new(545, 104); Width = 140 }
 
 $lblClient11 = [System.Windows.Forms.Label]@{ Text = 'Windows 11 image (.vhdx):'; Location = [System.Drawing.Point]::new(10, 141); AutoSize = $true }
-$txtClient11 = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 138); Width = 380; Text = (Join-Path $defaultParentRoot 'Client11-Base.vhdx') }
-$btnClient11 = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(570, 137); Width = 90 }
+$txtClient11 = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 138); Width = 265; Text = (Join-Path $defaultParentRoot 'Client11-Base.vhdx') }
+$btnClient11 = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(455, 137); Width = 80 }
+$btnClient11Od = [System.Windows.Forms.Button]@{ Text = 'From OneDrive...'; Location = [System.Drawing.Point]::new(545, 137); Width = 140 }
 
 $lblPassword = [System.Windows.Forms.Label]@{ Text = 'Administrator password (every VM):'; Location = [System.Drawing.Point]::new(10, 174); AutoSize = $true }
 $txtPassword = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(260, 171); Width = 200; Text = 'TrainingLab@2026!'; UseSystemPasswordChar = $true }
@@ -190,8 +193,8 @@ $txtPassword = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point
 $grpHost.Controls.AddRange([System.Windows.Forms.Control[]]@(
     $lblSwitch, $txtSwitch, $lblAdapter, $cmbAdapter,
     $lblVmRoot, $txtVmRoot, $btnVmRoot,
-    $lblServer2022, $txtServer2022, $btnServer2022,
-    $lblClient11, $txtClient11, $btnClient11,
+    $lblServer2022, $txtServer2022, $btnServer2022, $btnServer2022Od,
+    $lblClient11, $txtClient11, $btnClient11, $btnClient11Od,
     $lblPassword, $txtPassword
 ))
 
@@ -213,17 +216,65 @@ function New-VhdxOpenDialog {
     return $dlg
 }
 
+# Shows a minimal URL-input dialog. Returns the entered string, or $null if cancelled.
+function Show-UrlInputDialog {
+    param([string]$Prompt)
+    $dlg = [System.Windows.Forms.Form]@{
+        Text            = 'WAD_env - OneDrive download'
+        Size            = [System.Drawing.Size]::new(500, 140)
+        StartPosition   = 'CenterParent'
+        FormBorderStyle = 'FixedDialog'
+        MaximizeBox     = $false; MinimizeBox = $false
+    }
+    $lbl = [System.Windows.Forms.Label]@{ Text = $Prompt; Location = [System.Drawing.Point]::new(10, 10); AutoSize = $true }
+    $txt = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(10, 35); Width = 460 }
+    $ok  = [System.Windows.Forms.Button]@{ Text = 'Download'; Location = [System.Drawing.Point]::new(290, 65); Width = 90; DialogResult = 'OK' }
+    $cxl = [System.Windows.Forms.Button]@{ Text = 'Cancel';   Location = [System.Drawing.Point]::new(390, 65); Width = 80; DialogResult = 'Cancel' }
+    $dlg.Controls.AddRange([System.Windows.Forms.Control[]]@($lbl, $txt, $ok, $cxl))
+    $dlg.AcceptButton = $ok; $dlg.CancelButton = $cxl
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $txt.Text.Trim() }
+    return $null
+}
+
+function Invoke-WizardOneDriveDownload {
+    param([string]$Label, [string]$DestinationPath)
+    $url = Show-UrlInputDialog -Prompt "Paste your OneDrive sharing link for the $Label template:"
+    if (-not $url) { return }
+
+    $form.Enabled = $false
+    try {
+        Invoke-OneDriveDownload -SharingUrl $url -DestinationPath $DestinationPath
+        [System.Windows.Forms.MessageBox]::Show(
+            "$Label template downloaded successfully to:`n$DestinationPath",
+            'WAD_env', 'OK', 'Information') | Out-Null
+    }
+    catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Download failed for $Label template:`n$($_.Exception.Message)",
+            'WAD_env', 'OK', 'Error') | Out-Null
+    }
+    finally {
+        $form.Enabled = $true
+    }
+}
+
 $btnServer2022.Add_Click({
     $dlg = New-VhdxOpenDialog -Title 'Select Windows Server 2022 template (.vhdx)' -CurrentPath $txtServer2022.Text
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         $txtServer2022.Text = $dlg.FileName
     }
 })
+$btnServer2022Od.Add_Click({
+    Invoke-WizardOneDriveDownload -Label 'Server 2022' -DestinationPath $txtServer2022.Text.Trim()
+})
 $btnClient11.Add_Click({
     $dlg = New-VhdxOpenDialog -Title 'Select Windows 11 template (.vhdx)' -CurrentPath $txtClient11.Text
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         $txtClient11.Text = $dlg.FileName
     }
+})
+$btnClient11Od.Add_Click({
+    Invoke-WizardOneDriveDownload -Label 'Windows 11' -DestinationPath $txtClient11.Text.Trim()
 })
 
 $y += 225

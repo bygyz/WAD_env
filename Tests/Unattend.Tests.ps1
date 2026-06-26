@@ -72,6 +72,20 @@ Describe 'New-PerVmUnattendXml' {
         $script:xmlContent | Should -Match '<RunSynchronous>'
     }
 
+    It 'includes all Windows 11 OOBE suppressors to prevent language/account/privacy screens' {
+        $script:xmlContent | Should -Match '<HideLocalAccountScreen>true</HideLocalAccountScreen>'
+        $script:xmlContent | Should -Match '<HideOnlineAccountScreens>true</HideOnlineAccountScreens>'
+        $script:xmlContent | Should -Match '<HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>'
+        $script:xmlContent | Should -Match '<NetworkLocation>Work</NetworkLocation>'
+        $script:xmlContent | Should -Match '<ProtectYourPC>3</ProtectYourPC>'
+    }
+
+    It 'locks in en-US locale in the oobeSystem pass to suppress the language-choice screen' {
+        $script:xmlContent | Should -Match '<UILanguage>en-US</UILanguage>'
+        $script:xmlContent | Should -Match '<SystemLocale>en-US</SystemLocale>'
+        $script:xmlContent | Should -Match '<UserLocale>en-US</UserLocale>'
+    }
+
     It 'sets a known Administrator password so the trainee has a credential to RDP in with' {
         # Also found by actually running this: without an explicit password,
         # Windows Server's first-boot account setup has nothing to fall back
