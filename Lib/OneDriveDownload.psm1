@@ -3,19 +3,34 @@
 Set-StrictMode -Version Latest
 
 function Resolve-HttpRedirect {
-    # BITS does not follow HTTP redirects on its own — confirmed: the OneDrive
-    # API URL (/shares/u!.../root/content) returns a 302 to the real CDN URL,
-    # and BITS stops there with "HTTP redirect required". Resolve the full
-    # redirect chain with a HEAD request first, then hand the final URL to BITS.
+    # BITS does not follow HTTP redirects on its own (confirmed: 302 → "HTTP
+    # redirect required"). HttpWebRequest with AllowAutoRedirect=true handles
+    # 301/302/303/307 but throws on 308 "User migrated" (confirmed: OneDrive
+    # uses 308 when a personal OneDrive account is homed on a different server).
+    # Manual loop with AllowAutoRedirect=false handles every 3xx code.
     param([Parameter(Mandatory)][string]$Url)
 
-    $req = [System.Net.HttpWebRequest]::Create($Url)
-    $req.Method = 'HEAD'
-    $req.AllowAutoRedirect = $true
-    $resp = $req.GetResponse()
-    $finalUrl = $resp.ResponseUri.AbsoluteUri
-    $resp.Close()
-    return $finalUrl
+    $current = $Url
+    for ($i = 0; $i -lt 10; $i++) {
+        $req                   = [System.Net.HttpWebRequest]::Create($current)
+        $req.Method            = 'HEAD'
+        $req.AllowAutoRedirect = $false
+
+        $resp       = $req.GetResponse()
+        $statusCode = [int]$resp.StatusCode
+        $location   = $resp.Headers['Location']
+        $resp.Close()
+
+        if ($statusCode -ge 300 -and $statusCode -lt 400 -and $location) {
+            if ($location -notmatch '^https?://') {
+                $location = [System.Uri]::new([System.Uri]::new($current), $location).AbsoluteUri
+            }
+            $current = $location
+            continue
+        }
+        return $current
+    }
+    throw "Resolve-HttpRedirect: too many redirects starting from '$Url'"
 }
 
 function Invoke-OneDriveDownload {
