@@ -2,38 +2,52 @@
 
 Set-StrictMode -Version Latest
 
-# System.Net.Http is not auto-loaded in Windows PowerShell 5.1 — HttpClient
-# and HttpClientHandler are unavailable until this assembly is explicitly added.
+# System.Net.Http is not auto-loaded in Windows PowerShell 5.1.
 Add-Type -AssemblyName System.Net.Http
 
 function Invoke-HttpGet {
-    # HttpClient handles all 3xx redirects including 308 "User migrated" —
-    # confirmed that HttpWebRequest-based tools (Start-BitsTransfer, WebClient,
-    # Invoke-WebRequest on PS 5.1) do NOT handle 308 and throw "HTTP redirect
-    # required". ResponseHeadersRead + manual stream-copy avoids buffering a
-    # 15-20 GB file in memory. Write-Progress shows a real percentage.
+    # AllowAutoRedirect=true on HttpClientHandler internally uses HttpWebRequest,
+    # which does NOT handle 308 ("User migrated") and throws on EnsureSuccessStatusCode.
+    # AllowAutoRedirect=false + manual loop handles every 3xx code in pure PS.
     param(
         [Parameter(Mandatory)][string]$Url,
         [Parameter(Mandatory)][string]$DestinationPath
     )
 
     $handler = [System.Net.Http.HttpClientHandler]::new()
-    $client  = [System.Net.Http.HttpClient]::new($handler)
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler)
+
     try {
-        $response = $client.GetAsync(
-            $Url,
-            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
-        ).Result
+        $current  = $Url
+        $response = $null
+
+        for ($i = 0; $i -lt 10; $i++) {
+            $req      = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $current)
+            $response = $client.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).Result
+
+            $code = [int]$response.StatusCode
+            if ($code -ge 300 -and $code -lt 400) {
+                $loc = $response.Headers.Location
+                $response.Dispose(); $response = $null
+                if ($null -eq $loc) { throw "HTTP $code redirect with no Location header from '$current'" }
+                if (-not $loc.IsAbsoluteUri) {
+                    $loc = [System.Uri]::new([System.Uri]::new($current), $loc)
+                }
+                $current = $loc.AbsoluteUri
+                continue
+            }
+            break
+        }
+
+        if ($null -eq $response) { throw "Invoke-HttpGet: too many redirects for '$Url'" }
         $response.EnsureSuccessStatusCode() | Out-Null
 
         $contentLength = $response.Content.Headers.ContentLength
-        $srcStream  = $response.Content.ReadAsStreamAsync().Result
-        $fileStream = [System.IO.FileStream]::new(
-            $DestinationPath,
-            [System.IO.FileMode]::Create,
-            [System.IO.FileAccess]::Write,
-            [System.IO.FileShare]::None,
-            81920)
+        $srcStream     = $response.Content.ReadAsStreamAsync().Result
+        $fileStream    = [System.IO.FileStream]::new(
+            $DestinationPath, [System.IO.FileMode]::Create,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 81920)
         try {
             $buffer    = [byte[]]::new(81920)
             $totalRead = 0L
@@ -58,6 +72,7 @@ function Invoke-HttpGet {
         }
     }
     finally {
+        if ($null -ne $response) { $response.Dispose() }
         $client.Dispose()
         $handler.Dispose()
     }
@@ -66,13 +81,19 @@ function Invoke-HttpGet {
 function Invoke-OneDriveDownload {
     <#
     .SYNOPSIS
-        Downloads a file from a personal OneDrive sharing link.
+        Downloads a file from a OneDrive or SharePoint sharing link.
     .DESCRIPTION
-        Converts a personal OneDrive sharing URL (https://1drv.ms/...) to the
-        OneDrive API base64url URL and downloads the file via HttpClient.
-        HttpClient follows all HTTP redirects including 308 "User migrated"
-        (issued when the OneDrive account is homed on a geo-specific server).
-        The destination directory is created automatically if it doesn't exist.
+        Supports both personal OneDrive (1drv.ms / onedrive.live.com) and
+        SharePoint / OneDrive for Business (*.sharepoint.com) sharing links:
+
+          - sharepoint.com URLs: appends &download=1 to force direct file
+            download instead of the sharing/preview page.
+          - Personal OneDrive URLs: encodes the link via the OneDrive API
+            base64url scheme (api.onedrive.com/v1.0/shares/u!.../root/content).
+
+        In both cases the download uses HttpClient with AllowAutoRedirect=false
+        and a manual redirect loop, so all 3xx codes including 308 "User migrated"
+        are handled. The destination directory is created if it doesn't exist.
         Download progress is reported via Write-Progress in the console.
     #>
     [CmdletBinding()]
@@ -84,17 +105,28 @@ function Invoke-OneDriveDownload {
         [string]$DestinationPath
     )
 
-    $bytes  = [System.Text.Encoding]::UTF8.GetBytes($SharingUrl)
-    $b64    = [Convert]::ToBase64String($bytes)
-    $b64url = 'u!' + $b64.TrimEnd('=').Replace('/', '_').Replace('+', '-')
-    $apiUrl = "https://api.onedrive.com/v1.0/shares/$b64url/root/content"
+    $uri = [System.Uri]::new($SharingUrl)
+    if ($uri.Host -match 'sharepoint\.com$') {
+        # SharePoint / OneDrive for Business sharing links already carry ?e=<token>.
+        # Appending &download=1 forces the raw file bytes instead of the HTML
+        # preview/redirect page that the sharing URL normally opens.
+        $dlUrl = if ($uri.Query) { "$SharingUrl&download=1" } else { "$SharingUrl?download=1" }
+    }
+    else {
+        # Personal OneDrive (1drv.ms, onedrive.live.com): base64url-encode the
+        # full sharing URL and call the OneDrive API /shares endpoint.
+        $bytes  = [System.Text.Encoding]::UTF8.GetBytes($SharingUrl)
+        $b64    = [Convert]::ToBase64String($bytes)
+        $b64url = 'u!' + $b64.TrimEnd('=').Replace('/', '_').Replace('+', '-')
+        $dlUrl  = "https://api.onedrive.com/v1.0/shares/$b64url/root/content"
+    }
 
     $dir = Split-Path $DestinationPath -Parent
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
 
-    Invoke-HttpGet -Url $apiUrl -DestinationPath $DestinationPath
+    Invoke-HttpGet -Url $dlUrl -DestinationPath $DestinationPath
 }
 
 Export-ModuleMember -Function Invoke-OneDriveDownload

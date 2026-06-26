@@ -126,10 +126,10 @@ If you already have sysprepped VHDXs stored on your personal OneDrive:
 1. Launch the wizard: `.\Start-LabDeployWizard.ps1`
 2. In the *Host & security* section, click **From OneDrive...** next to the
    *Server 2022 image* field.
-3. Paste your OneDrive sharing link (the URL from "Copy link" in OneDrive)
-   and click **Download**. The transfer runs via BITS — progress is visible
-   in the console behind the form. For a 15–20 GB image expect 10–20 minutes
-   depending on your connection.
+3. Paste your sharing link (the URL from "Copy link" in OneDrive or
+   SharePoint) and click **Download**. Progress is visible in the console
+   behind the form. For a 15–20 GB image expect 10–20 minutes depending on
+   your connection.
 4. Repeat for the *Windows 11 image* field.
 5. Click **Deploy** — the wizard auto-protects the downloaded files and
    proceeds normally.
@@ -278,7 +278,7 @@ WAD_env/
 │   ├── VmDefinitions.psm1      # topology + network config + pre-flight IP check
 │   ├── ParentImage.psm1        # parent VHDX read-only protection
 │   ├── Unattend.psm1           # per-VM unattend.xml generation + offline injection
-│   ├── OneDriveDownload.psm1   # OneDrive sharing-link → BITS download
+│   ├── OneDriveDownload.psm1   # OneDrive/SharePoint sharing-link download (HttpClient)
 │   ├── DiskBudget.psm1         # disk-space pre-flight + size reporting
 │   └── Logging.psm1            # timestamped run logging
 ├── Deploy.ps1                 # builds the lab
