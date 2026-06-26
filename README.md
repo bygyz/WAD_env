@@ -7,6 +7,27 @@ DC promotion, DNS, DHCP, OUs, GPOs, trusts, and user/group management are
 
 ---
 
+## Getting the scripts
+
+**Option A — Git (recommended):**
+
+```powershell
+git clone https://github.com/bygyz/WAD_env.git
+cd WAD_env
+```
+
+**Option B — ZIP download (no Git required):**
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/bygyz/WAD_env/archive/refs/heads/master.zip `
+                  -OutFile "$env:USERPROFILE\Downloads\WAD_env.zip"
+Expand-Archive -Path "$env:USERPROFILE\Downloads\WAD_env.zip" `
+               -DestinationPath "$env:USERPROFILE\Downloads\WAD_env"
+cd "$env:USERPROFILE\Downloads\WAD_env\WAD_env-master"
+```
+
+---
+
 ## Prerequisites
 
 Before running anything, you need four things:
