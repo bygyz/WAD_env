@@ -2,6 +2,10 @@
 
 Set-StrictMode -Version Latest
 
+# System.Net.Http is not auto-loaded in Windows PowerShell 5.1 — HttpClient
+# and HttpClientHandler are unavailable until this assembly is explicitly added.
+Add-Type -AssemblyName System.Net.Http
+
 function Invoke-HttpGet {
     # HttpClient handles all 3xx redirects including 308 "User migrated" —
     # confirmed that HttpWebRequest-based tools (Start-BitsTransfer, WebClient,
