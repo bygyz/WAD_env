@@ -35,10 +35,16 @@ $Script:ParentImageFileNames = @{
     Client11   = 'Client11-Base.vhdx'
 }
 
+# Per-OS-image path overrides — set via Set-ParentImagePath to point directly
+# at a template file without requiring the root+filename convention.
+$Script:ParentImagePathOverrides = @{}
+
 function Get-ParentImagePath {
     <#
     .SYNOPSIS
-        Resolves the dedicated path for a given OS image type.
+        Resolves the path for a given OS image type.
+        Checks per-image overrides (Set-ParentImagePath) first, then falls
+        back to the root+filename convention (Set-ParentImageRoot).
     #>
     [CmdletBinding()]
     param(
@@ -47,7 +53,29 @@ function Get-ParentImagePath {
         [string]$OSImage
     )
 
+    if ($Script:ParentImagePathOverrides.ContainsKey($OSImage)) {
+        return $Script:ParentImagePathOverrides[$OSImage]
+    }
     return (Join-Path $Script:ParentImageRoot $Script:ParentImageFileNames[$OSImage])
+}
+
+function Set-ParentImagePath {
+    <#
+    .SYNOPSIS
+        Overrides the path for a specific OS image, pointing directly at a
+        VHDX file instead of relying on the root+filename convention.
+        Used by Deploy.ps1's -ParentImagePaths parameter and the wizard's
+        file pickers so a template can be used in-place without copying.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('Server2022', 'Client10', 'Client11')]
+        [string]$OSImage,
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+    $Script:ParentImagePathOverrides[$OSImage] = $Path
 }
 
 function Protect-ParentImage {
@@ -125,4 +153,4 @@ function Set-ParentImageRoot {
     $Script:ParentImageRoot = $Path
 }
 
-Export-ModuleMember -Function Get-ParentImagePath, Protect-ParentImage, Test-ParentImageProtected, Initialize-ParentImageRoot, Set-ParentImageRoot
+Export-ModuleMember -Function Get-ParentImagePath, Set-ParentImagePath, Protect-ParentImage, Test-ParentImageProtected, Initialize-ParentImageRoot, Set-ParentImageRoot

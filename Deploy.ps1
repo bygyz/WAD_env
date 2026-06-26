@@ -69,9 +69,18 @@
     auto-allocated IP - see Get-LabVmDefinitions.
 
 .PARAMETER ParentImageRoot
-    Override where sysprepped parent VHDXs live (Lib/ParentImage.psm1's
-    default). Omit to use the default F:\WAD_env\ParentImages (or a
-    script-relative path with no F:\ drive).
+    Override the parent-image root folder (Lib/ParentImage.psm1's default).
+    Omit to use the default F:\WAD_env\ParentImages (or a script-relative
+    path with no F:\ drive). Use -ParentImagePaths instead when pointing
+    directly at template files that don't follow the root+filename convention.
+
+.PARAMETER ParentImagePaths
+    Hashtable of per-OS-image paths pointing directly at template VHDXs,
+    e.g. @{ Server2022 = 'D:\Templates\MySrv.vhdx'; Client11 = 'D:\...' }.
+    Takes precedence over -ParentImageRoot for the specified OS images.
+    Set by the wizard's file pickers; pass manually on the CLI when your
+    templates live at arbitrary paths. Each file must already be read-only
+    (Protect-ParentImage) before Deploy.ps1 runs.
 #>
 [CmdletBinding()]
 param(
@@ -94,7 +103,8 @@ param(
     [PSCustomObject]$NetworkConfig,
     [hashtable]$NameOverrides = @{},
     [hashtable]$IPOverrides = @{},
-    [string]$ParentImageRoot
+    [string]$ParentImageRoot,
+    [hashtable]$ParentImagePaths = @{}
 )
 
 Set-StrictMode -Version Latest
@@ -108,6 +118,9 @@ Import-Module (Join-Path $PSScriptRoot 'Lib\Unattend.psm1') -Force
 
 if ($ParentImageRoot) {
     Set-ParentImageRoot -Path $ParentImageRoot
+}
+foreach ($osImage in $ParentImagePaths.Keys) {
+    Set-ParentImagePath -OSImage $osImage -Path $ParentImagePaths[$osImage]
 }
 
 function Ensure-LabSwitch {

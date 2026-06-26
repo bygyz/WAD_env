@@ -47,6 +47,7 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 }
 
 Import-Module (Join-Path $PSScriptRoot 'Lib\VmDefinitions.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Lib\ParentImage.psm1') -Force
 
 function New-VmPreviewRows {
     param($DomainACount, $DomainBCount, $ClientCount, $BaseIP, $Prefix, $Gateway, $Dns, $NameOverridesTable, $IPOverridesTable = @{})
@@ -149,7 +150,7 @@ $y += 190
 $grpHost = [System.Windows.Forms.GroupBox]@{
     Text = 'Host & security'
     Location = [System.Drawing.Point]::new(10, $y)
-    Size = [System.Drawing.Size]::new(690, 180)
+    Size = [System.Drawing.Size]::new(690, 215)
 }
 $form.Controls.Add($grpHost)
 
@@ -170,17 +171,27 @@ $lblVmRoot = [System.Windows.Forms.Label]@{ Text = 'VM storage root:'; Location 
 $txtVmRoot = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 72); Width = 380; Text = $(if (Test-Path -LiteralPath 'F:\') { 'F:\WAD_env\VMs' } else { Join-Path $PSScriptRoot 'VMs' }) }
 $btnVmRoot = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(570, 71); Width = 90 }
 
-$lblParentRoot = [System.Windows.Forms.Label]@{ Text = 'Sysprep template (parent image) folder:'; Location = [System.Drawing.Point]::new(10, 108); AutoSize = $true }
-$txtParentRoot = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 105); Width = 380; Text = $(if (Test-Path -LiteralPath 'F:\') { 'F:\WAD_env\ParentImages' } else { Join-Path $PSScriptRoot 'ParentImages' }) }
-$btnParentRoot = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(570, 104); Width = 90 }
+# Per-image file pickers — browse directly to the template .vhdx for each OS,
+# no copy or rename required. The wizard auto-protects (sets read-only) any
+# file that isn't already protected when Deploy is clicked.
+$defaultParentRoot = if (Test-Path -LiteralPath 'F:\') { 'F:\WAD_env\ParentImages' } else { Join-Path $PSScriptRoot 'ParentImages' }
 
-$lblPassword = [System.Windows.Forms.Label]@{ Text = 'Administrator password (every VM):'; Location = [System.Drawing.Point]::new(10, 141); AutoSize = $true }
-$txtPassword = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(260, 138); Width = 200; Text = 'TrainingLab@2026!'; UseSystemPasswordChar = $true }
+$lblServer2022 = [System.Windows.Forms.Label]@{ Text = 'Server 2022 image (.vhdx):'; Location = [System.Drawing.Point]::new(10, 108); AutoSize = $true }
+$txtServer2022 = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 105); Width = 380; Text = (Join-Path $defaultParentRoot 'Server2022-Base.vhdx') }
+$btnServer2022 = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(570, 104); Width = 90 }
+
+$lblClient11 = [System.Windows.Forms.Label]@{ Text = 'Windows 11 image (.vhdx):'; Location = [System.Drawing.Point]::new(10, 141); AutoSize = $true }
+$txtClient11 = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(180, 138); Width = 380; Text = (Join-Path $defaultParentRoot 'Client11-Base.vhdx') }
+$btnClient11 = [System.Windows.Forms.Button]@{ Text = 'Browse...'; Location = [System.Drawing.Point]::new(570, 137); Width = 90 }
+
+$lblPassword = [System.Windows.Forms.Label]@{ Text = 'Administrator password (every VM):'; Location = [System.Drawing.Point]::new(10, 174); AutoSize = $true }
+$txtPassword = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(260, 171); Width = 200; Text = 'TrainingLab@2026!'; UseSystemPasswordChar = $true }
 
 $grpHost.Controls.AddRange([System.Windows.Forms.Control[]]@(
     $lblSwitch, $txtSwitch, $lblAdapter, $cmbAdapter,
     $lblVmRoot, $txtVmRoot, $btnVmRoot,
-    $lblParentRoot, $txtParentRoot, $btnParentRoot,
+    $lblServer2022, $txtServer2022, $btnServer2022,
+    $lblClient11, $txtClient11, $btnClient11,
     $lblPassword, $txtPassword
 ))
 
@@ -190,14 +201,32 @@ $btnVmRoot.Add_Click({
         $txtVmRoot.Text = $dlg.SelectedPath
     }
 })
-$btnParentRoot.Add_Click({
-    $dlg = [System.Windows.Forms.FolderBrowserDialog]::new()
+
+function New-VhdxOpenDialog {
+    param([string]$Title, [string]$CurrentPath)
+    $dlg = [System.Windows.Forms.OpenFileDialog]@{
+        Title  = $Title
+        Filter = 'VHDX files (*.vhdx)|*.vhdx|All files (*.*)|*.*'
+    }
+    $dir = try { Split-Path $CurrentPath -Parent } catch { '' }
+    if ($dir -and (Test-Path -LiteralPath $dir)) { $dlg.InitialDirectory = $dir }
+    return $dlg
+}
+
+$btnServer2022.Add_Click({
+    $dlg = New-VhdxOpenDialog -Title 'Select Windows Server 2022 template (.vhdx)' -CurrentPath $txtServer2022.Text
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $txtParentRoot.Text = $dlg.SelectedPath
+        $txtServer2022.Text = $dlg.FileName
+    }
+})
+$btnClient11.Add_Click({
+    $dlg = New-VhdxOpenDialog -Title 'Select Windows 11 template (.vhdx)' -CurrentPath $txtClient11.Text
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $txtClient11.Text = $dlg.FileName
     }
 })
 
-$y += 190
+$y += 225
 
 # --- Buttons ---
 $btnDeploy = [System.Windows.Forms.Button]@{ Text = 'Deploy'; Location = [System.Drawing.Point]::new(520, $y); Width = 90; Height = 30 }
@@ -292,6 +321,32 @@ $btnDeploy.Add_Click({
         return
     }
 
+    # Validate template files and auto-protect any that aren't read-only yet.
+    $templateEntries = @(
+        [PSCustomObject]@{ Label = 'Server 2022'; Path = $txtServer2022.Text.Trim() },
+        [PSCustomObject]@{ Label = 'Windows 11';  Path = $txtClient11.Text.Trim() }
+    )
+    foreach ($entry in $templateEntries) {
+        if (-not (Test-Path -LiteralPath $entry.Path -PathType Leaf)) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "$($entry.Label) template not found:`n$($entry.Path)`n`nUse Browse to point at the correct .vhdx file.",
+                'WAD_env', 'OK', 'Warning') | Out-Null
+            return
+        }
+        if (-not (Test-ParentImageProtected -Path $entry.Path)) {
+            try {
+                Protect-ParentImage -Path $entry.Path
+                Write-Host "Auto-protected parent image: $($entry.Path)"
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Could not set $($entry.Label) template to read-only:`n$($entry.Path)`n`n$($_.Exception.Message)",
+                    'WAD_env', 'OK', 'Error') | Out-Null
+                return
+            }
+        }
+    }
+
     $nameOverrides = @{}
     $ipOverrides = @{}
     foreach ($row in $grid.Rows) {
@@ -308,21 +363,24 @@ $btnDeploy.Add_Click({
     }
 
     $script:wizardResult = [PSCustomObject]@{
-        DomainAServerCount   = [int]$numA.Value
-        DomainBServerCount   = [int]$numB.Value
-        ClientCount          = [int]$numC.Value
-        NetworkConfig        = [PSCustomObject]@{
+        DomainAServerCount    = [int]$numA.Value
+        DomainBServerCount    = [int]$numB.Value
+        ClientCount           = [int]$numC.Value
+        NetworkConfig         = [PSCustomObject]@{
             SubnetPrefixLength = [int]$numPrefix.Value
             Gateway            = $txtGateway.Text
             DnsServers         = @($txtDns.Text -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
             BaseIPAddress      = $txtBaseIp.Text
         }
-        NameOverrides        = $nameOverrides
-        IPOverrides          = $ipOverrides
-        SwitchName           = $txtSwitch.Text
-        ExternalAdapterName  = $cmbAdapter.Text
-        VmStorageRoot        = $txtVmRoot.Text
-        ParentImageRoot      = $txtParentRoot.Text
+        NameOverrides         = $nameOverrides
+        IPOverrides           = $ipOverrides
+        SwitchName            = $txtSwitch.Text
+        ExternalAdapterName   = $cmbAdapter.Text
+        VmStorageRoot         = $txtVmRoot.Text
+        ParentImagePaths      = @{
+            Server2022 = $txtServer2022.Text.Trim()
+            Client11   = $txtClient11.Text.Trim()
+        }
         AdministratorPassword = $txtPassword.Text
     }
     $form.Close()
@@ -344,13 +402,11 @@ $deployParams = @{
     IPOverrides           = $script:wizardResult.IPOverrides
     SwitchName            = $script:wizardResult.SwitchName
     VmStorageRoot         = $script:wizardResult.VmStorageRoot
+    ParentImagePaths      = $script:wizardResult.ParentImagePaths
     AdministratorPassword = $script:wizardResult.AdministratorPassword
 }
 if ($script:wizardResult.ExternalAdapterName) {
     $deployParams.ExternalAdapterName = $script:wizardResult.ExternalAdapterName
-}
-if ($script:wizardResult.ParentImageRoot) {
-    $deployParams.ParentImageRoot = $script:wizardResult.ParentImageRoot
 }
 
 Write-Host "Starting deploy with $($deployParams.DomainAServerCount) Domain A server(s), $($deployParams.DomainBServerCount) Domain B server(s), $($deployParams.ClientCount) client(s)..."

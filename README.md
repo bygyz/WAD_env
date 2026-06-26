@@ -131,38 +131,44 @@ the target drive has the space.
 
 ### Option B — From an existing sysprepped template
 
-If your template VM has a checkpoint, the actual disk content is in an
-`.avhdx` on top of a near-empty base `.vhdx`. Merge it first, then copy:
+**Flat `.vhdx` (no checkpoint):** launch the wizard and browse to the file
+directly in the *Server 2022 image* or *Windows 11 image* fields. No copy,
+no rename needed. The wizard sets the file read-only automatically before
+deploying.
+
+**Template with a checkpoint (`.avhdx` on top of a base `.vhdx`):** the real
+disk content lives in the `.avhdx`. `Merge-VHD` merges it into its existing
+immediate parent in place — it does NOT create a new file at an arbitrary
+path (confirmed the hard way). Merge first, then browse to the result in the
+wizard:
 
 ```powershell
 Merge-VHD -Path 'F:\WAD_env\TemplateImport\TEMPLATE-SRV2022\TEMPLATE-SRV2022_<guid>.avhdx'
-Copy-Item 'F:\WAD_env\TemplateImport\TEMPLATE-SRV2022\TEMPLATE-SRV2022.vhdx' `
-          -Destination (Get-ParentImagePath -OSImage Server2022)
+# then browse to TEMPLATE-SRV2022.vhdx in the wizard's Server 2022 image field
 ```
 
-If the template has no checkpoint (already a flat `.vhdx`), copy it directly —
-no merge needed.
-
-> **Note:** A long `Merge-VHD` will silently die if the session that launched
-> it disconnects. Run it as a one-time Scheduled Task to decouple it from your
-> session:
+> **Keep a long merge alive.** A non-interactive session's child processes can
+> be torn down at disconnect even when started "detached". Run the merge as a
+> one-time Scheduled Task to decouple it from your session:
 > ```powershell
 > schtasks /Create /TN "MergeVHD" /SC ONCE /ST 00:00 /TR "powershell Merge-VHD -Path '...'"
 > ```
 
 ### Protect the parent images
 
-Do this after building (or rebuilding) each image:
+**Using the wizard:** protection is automatic — no manual step needed.
+
+**Using `Deploy.ps1` directly (CLI):** protect each image before the first
+deploy, and again any time you rebuild one:
 
 ```powershell
 Import-Module .\Lib\ParentImage.psm1
-Initialize-ParentImageRoot
-Protect-ParentImage -Path (Get-ParentImagePath -OSImage Server2022)
-Protect-ParentImage -Path (Get-ParentImagePath -OSImage Client11)
+Protect-ParentImage -Path 'F:\path\to\Server2022-template.vhdx'
+Protect-ParentImage -Path 'F:\path\to\Client11-template.vhdx'
 ```
 
-`Deploy.ps1` refuses to run if any parent isn't read-only — this prevents
-a differencing-disk build from silently corrupting every VM if a parent is
+`Deploy.ps1` refuses to run against an unprotected parent — this stops a
+differencing-disk build from silently corrupting every VM if a parent is
 ever modified.
 
 ---
@@ -175,8 +181,9 @@ ever modified.
 .\Start-LabDeployWizard.ps1
 ```
 
-Covers everything: VM counts, hostnames, IPs, adapter, storage, password.
-Runs `Deploy.ps1` directly — no extra steps.
+Covers everything: VM counts, hostnames, IPs, adapter, storage, template
+files, password. Browse directly to your `.vhdx` templates — no copy or
+rename required. Runs `Deploy.ps1` directly when you click Deploy.
 
 ### CLI (scripting / headless)
 
