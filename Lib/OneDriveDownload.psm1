@@ -2,49 +2,74 @@
 
 Set-StrictMode -Version Latest
 
-function Resolve-HttpRedirect {
-    # BITS does not follow HTTP redirects on its own (confirmed: 302 → "HTTP
-    # redirect required"). HttpWebRequest with AllowAutoRedirect=true handles
-    # 301/302/303/307 but throws on 308 "User migrated" (confirmed: OneDrive
-    # uses 308 when a personal OneDrive account is homed on a different server).
-    # Manual loop with AllowAutoRedirect=false handles every 3xx code.
-    param([Parameter(Mandatory)][string]$Url)
+function Invoke-HttpGet {
+    # HttpClient handles all 3xx redirects including 308 "User migrated" —
+    # confirmed that HttpWebRequest-based tools (Start-BitsTransfer, WebClient,
+    # Invoke-WebRequest on PS 5.1) do NOT handle 308 and throw "HTTP redirect
+    # required". ResponseHeadersRead + manual stream-copy avoids buffering a
+    # 15-20 GB file in memory. Write-Progress shows a real percentage.
+    param(
+        [Parameter(Mandatory)][string]$Url,
+        [Parameter(Mandatory)][string]$DestinationPath
+    )
 
-    $current = $Url
-    for ($i = 0; $i -lt 10; $i++) {
-        $req                   = [System.Net.HttpWebRequest]::Create($current)
-        $req.Method            = 'HEAD'
-        $req.AllowAutoRedirect = $false
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $client  = [System.Net.Http.HttpClient]::new($handler)
+    try {
+        $response = $client.GetAsync(
+            $Url,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).Result
+        $response.EnsureSuccessStatusCode() | Out-Null
 
-        $resp       = $req.GetResponse()
-        $statusCode = [int]$resp.StatusCode
-        $location   = $resp.Headers['Location']
-        $resp.Close()
+        $contentLength = $response.Content.Headers.ContentLength
+        $srcStream  = $response.Content.ReadAsStreamAsync().Result
+        $fileStream = [System.IO.FileStream]::new(
+            $DestinationPath,
+            [System.IO.FileMode]::Create,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None,
+            81920)
+        try {
+            $buffer    = [byte[]]::new(81920)
+            $totalRead = 0L
+            $fileName  = Split-Path $DestinationPath -Leaf
 
-        if ($statusCode -ge 300 -and $statusCode -lt 400 -and $location) {
-            if ($location -notmatch '^https?://') {
-                $location = [System.Uri]::new([System.Uri]::new($current), $location).AbsoluteUri
+            while (($read = $srcStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileStream.Write($buffer, 0, $read)
+                $totalRead += $read
+                if ($contentLength -gt 0) {
+                    $pct    = [int]([double]$totalRead / $contentLength * 100)
+                    $readMB = [math]::Round($totalRead / 1MB, 1)
+                    $totGB  = [math]::Round($contentLength / 1GB, 2)
+                    Write-Progress -Activity "Downloading $fileName" `
+                        -Status "$readMB MB of $totGB GB" -PercentComplete $pct
+                }
             }
-            $current = $location
-            continue
+            Write-Progress -Activity "Downloading $fileName" -Completed
         }
-        return $current
+        finally {
+            $fileStream.Close()
+            $srcStream.Close()
+        }
     }
-    throw "Resolve-HttpRedirect: too many redirects starting from '$Url'"
+    finally {
+        $client.Dispose()
+        $handler.Dispose()
+    }
 }
 
 function Invoke-OneDriveDownload {
     <#
     .SYNOPSIS
-        Downloads a file from a personal OneDrive sharing link using BITS.
+        Downloads a file from a personal OneDrive sharing link.
     .DESCRIPTION
         Converts a personal OneDrive sharing URL (https://1drv.ms/...) to the
-        OneDrive API base64url URL, resolves the redirect chain to the real CDN
-        URL, then transfers the file using Start-BitsTransfer. BITS shows
-        transfer progress in the console and handles large files (15-20 GB)
-        reliably without holding the whole file in memory.
-
+        OneDrive API base64url URL and downloads the file via HttpClient.
+        HttpClient follows all HTTP redirects including 308 "User migrated"
+        (issued when the OneDrive account is homed on a geo-specific server).
         The destination directory is created automatically if it doesn't exist.
+        Download progress is reported via Write-Progress in the console.
     #>
     [CmdletBinding()]
     param(
@@ -60,15 +85,12 @@ function Invoke-OneDriveDownload {
     $b64url = 'u!' + $b64.TrimEnd('=').Replace('/', '_').Replace('+', '-')
     $apiUrl = "https://api.onedrive.com/v1.0/shares/$b64url/root/content"
 
-    $dlUrl = Resolve-HttpRedirect -Url $apiUrl
-
     $dir = Split-Path $DestinationPath -Parent
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
 
-    Start-BitsTransfer -Source $dlUrl -Destination $DestinationPath `
-        -DisplayName "Downloading $(Split-Path $DestinationPath -Leaf)"
+    Invoke-HttpGet -Url $apiUrl -DestinationPath $DestinationPath
 }
 
 Export-ModuleMember -Function Invoke-OneDriveDownload
